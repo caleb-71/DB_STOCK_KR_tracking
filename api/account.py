@@ -263,3 +263,46 @@ def get_position_qty(symbol: str) -> int:
 
     pos_map = get_accounts_symbol_map()
     return pos_map.get(clean_sym, {}).get("quantity", 0)
+
+
+# =======================================================================
+# 💡 [호환성 패치] 기존 전략 파일들이 호출하는 리스트형 반환 래퍼 함수 추가
+# =======================================================================
+def get_accounts() -> List[Dict[str, Any]]:
+    """
+    [호환성 패치] 기존 전략 파일(buy_entry, sell_entry 등)이
+    요구하는 리스트형 계좌 데이터를 국내 주식 규격에 맞춰 반환합니다.
+    """
+    accounts = []
+
+    # 1. KRW (원화 예수금)
+    try:
+        cash_info = get_account_deposit()
+        accounts.append({
+            "currency": "KRW",
+            "balance": str(cash_info.get("deposit", 0.0)),
+            "locked": "0",
+            "avg_buy_price": "0",
+            "orderable": str(cash_info.get("deposit", 0.0)),
+            "withdrawable": str(cash_info.get("withdrawable", 0.0)),
+        })
+    except Exception as e:
+        print(f"[account.py] 예수금 조회 실패 (무시됨): {e}")
+
+    # 2. 보유 종목 (국내 주식)
+    try:
+        pos_map = get_accounts_symbol_map()
+        for sym, info in pos_map.items():
+            accounts.append({
+                "currency": sym,  # order_executor.py 에서 사용
+                "symbol": sym,  # buy/sell_entry.py 에서 사용
+                "IsuNo": sym,  # 원본 키값 호환
+                "balance": str(info["quantity"]),
+                "locked": "0",
+                "avg_buy_price": str(info["avg_buy_price"]),
+                "eval_amt": str(info["eval_amt"]),
+            })
+    except Exception as e:
+        print(f"[account.py] 보유 주식 조회 실패 (무시됨): {e}")
+
+    return accounts

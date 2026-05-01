@@ -76,10 +76,10 @@ def main():
     ensure_csv_files()
 
     # ✅ 봇 시작 시 DB증권 토큰 강제 발급 (만료 걱정 없는 클린 시작)
-    try:
-        force_issue_new_token()
-    except Exception as e:
-        print(f"[main.py] ⚠️ 토큰 갱신 실패 (기존 토큰 재사용 시도): {e}")
+    # try:
+    #     force_issue_new_token()
+    # except Exception as e:
+    #     print(f"[main.py] ⚠️ 토큰 갱신 실패 (기존 토큰 재사용 시도): {e}")
 
     run_casino_entry()
     print("[main.py] 🛑 프로그램 정상 종료")
