@@ -1,4 +1,6 @@
 # strategy/entry.py
+# -*- coding: utf-8 -*-
+
 import time
 from datetime import datetime
 
@@ -29,32 +31,34 @@ except Exception as e:
     get_market_open_status = None
 
 
-def get_now_est_str():
+def get_now_kst_str():
+    """한국 표준시(KST) 기준 현재 시간 문자열 반환"""
     if pytz:
-        est = pytz.timezone('US/Eastern')
-        return datetime.now(est).strftime("%Y-%m-%d %H:%M:%S EST")
-    return "Timezone N/A"
+        kst = pytz.timezone('Asia/Seoul')
+        return datetime.now(kst).strftime("%Y-%m-%d %H:%M:%S KST")
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S (System Time)")
 
 
 def run_casino_entry():
-    print(f"[entry.py] ▶ 트레일링 스탑 시스템 가동 (현재 시각: {get_now_est_str()})")
+    print(f"[entry.py] ▶ 국내주식 자동매매 시스템 가동 (현재 시각: {get_now_kst_str()})")
 
     last_minute = None
     last_reason = "최초 실행 대기 중"
 
-    # ✅ 매일 밤 9시(21시) 갱신을 추적하기 위한 변수
+    # 매일 아침 8시 갱신을 추적하기 위한 변수
     last_refresh_date = None
 
     while True:
         try:
-            now = datetime.now()  # 한국 시간(KST) 기준
+            # 기본적으로 시스템 시간(한국 서버 기준 KST)을 사용
+            now = datetime.now()
             current_date = now.date()
 
             # =====================================================
-            # 💡 [핵심 개선] 매일 밤 9시(21시)에 선제적으로 토큰 갱신 (장 시작 전)
-            # 프로그램 최초 실행 시(None) 또는 날짜가 바뀌고 밤 9시가 넘었을 때 1회 갱신
+            # 💡 [핵심 패치 1] 매일 아침 8시 토큰 선제 갱신 (한국장 기준)
+            # 프로그램 최초 실행 시(None) 또는 날짜가 바뀌고 아침 8시가 넘었을 때 1회 갱신
             # =====================================================
-            if last_refresh_date is None or (last_refresh_date != current_date and now.hour >= 21):
+            if last_refresh_date is None or (last_refresh_date != current_date and now.hour >= 8):
                 print(f"\n🔑 [{now.strftime('%Y-%m-%d %H:%M:%S')}] 장 시작 전 API 토큰 선제 발급 (안전 확보)...")
                 if callable(force_issue_new_token):
                     try:
@@ -66,10 +70,11 @@ def run_casino_entry():
                 else:
                     last_refresh_date = current_date
 
+            # 분이 바뀔 때마다(1분 주기로) 메인 로직 실행
             if last_minute is None or now.minute != last_minute:
-                now_est = get_now_est_str()
+                now_kst = get_now_kst_str()
                 print(f"\n=======================================================")
-                print(f"🕒 [분루프 시작] {now.strftime('%Y-%m-%d %H:%M:%S')} (EST: {now_est})")
+                print(f"🕒 [분루프 시작] {now_kst}")
                 print(f"=======================================================")
 
                 # --- (1) 장 상태 확인 ---
@@ -107,16 +112,18 @@ def run_casino_entry():
 
                 # --- (4) 정규장이 열려있을 때 (True) ---
                 else:
-                    # 💡 [신규 방어막] 장 개장 직후 3분(09:30~09:32 EST) 동안은 가짜 호가가 튀므로 매매를 건너뜁니다.
+                    # =====================================================
+                    # 💡 [핵심 패치 2] 한국장 개장 직후 3분 방어막 (09:00 ~ 09:02)
+                    # 시가 단일가 매매 직후의 비정상적 변동성을 피하기 위한 대기
+                    # =====================================================
                     is_grace_period = False
+
                     if pytz:
-                        est_now = datetime.now(pytz.timezone('US/Eastern'))
-                        # 뉴욕 현지 시각 기준 정확히 09시 30, 31, 32분에 방어막 가동
-                        if est_now.hour == 9 and 30 <= est_now.minute <= 32:
+                        kst_now = datetime.now(pytz.timezone('Asia/Seoul'))
+                        if kst_now.hour == 9 and 0 <= kst_now.minute <= 2:
                             is_grace_period = True
                     else:
-                        # 만약 pytz가 없다면 한국 시각(KST) 22시 또는 23시의 30~32분을 방어막으로 사용
-                        if now.hour in [22, 23] and 30 <= now.minute <= 32:
+                        if now.hour == 9 and 0 <= now.minute <= 2:
                             is_grace_period = True
 
                     if is_grace_period:

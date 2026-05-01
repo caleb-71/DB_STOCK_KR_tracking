@@ -1,8 +1,11 @@
 # strategy/buy_entry.py
+# -*- coding: utf-8 -*-
+
 import os
 import time
-import pandas as pd
 from typing import Dict, Any, Optional
+
+import pandas as pd
 
 from api.account import get_accounts
 from api.order import get_order_results_by_uuids, cancel_orders_by_uuids
@@ -13,10 +16,11 @@ from manager.order_executor import execute_buy_orders
 _LAST_BUY_STATUS_CHECK_TS = 0.0
 BUY_STATUS_CHECK_MIN_INTERVAL_SEC = 20
 BUY_STATUS_CHECK_BATCH_SIZE = 20
-BUY_STATUS_CHECK_BATCH_SLEEP_SEC = 0.5  # ✅ API 과부하 방지를 위해 0.5초로 살짝 늘림
+BUY_STATUS_CHECK_BATCH_SLEEP_SEC = 0.5
 
 
 def _to_symbol(market_or_symbol: str) -> str:
+    """종목코드 정제 (A 접두사는 API단에서 처리)"""
     s = str(market_or_symbol or "").strip()
     s = s.replace("KRW-", "").strip()
     return s.upper()
@@ -43,7 +47,8 @@ def _ensure_symbol_column(df: pd.DataFrame, df_name: str = "df") -> pd.DataFrame
 
 
 def _extract_symbol_from_account(acc: Dict[str, Any]) -> Optional[str]:
-    for key in ("symbol", "AstkIsuNo", "isu_no", "ticker", "currency"):
+    # 국내주식 계좌 조회 API의 응답 키값(IsuNo 등) 호환
+    for key in ("symbol", "IsuNo", "isu_no", "ticker", "currency"):
         v = acc.get(key)
         if v:
             s = _to_symbol(str(v))
@@ -54,19 +59,17 @@ def _extract_symbol_from_account(acc: Dict[str, Any]) -> Optional[str]:
 def _safe_float(x: Any, default: float = 0.0) -> float:
     try:
         return float(str(x).replace(",", "").strip())
-    except:
+    except Exception:
         return default
 
 
 def _is_no_history_error(e: Exception) -> bool:
     msg = str(e)
-    return ("'rsp_cd': '2679'" in msg) or ('"rsp_cd": "2679"' in msg) or ("조회내역이 없습니다" in msg)
+    return ("'rsp_cd': '2679'" in msg) or ('"rsp_cd": "2679"' in msg) or ("조회내역" in msg)
 
 
 def clean_buy_log_for_fully_sold_symbols(buy_log_df: pd.DataFrame, holdings: Dict[str, Any]) -> pd.DataFrame:
-    """
-    [핵심 리팩토링] Initial 주문이 없어진 새로운 전략에 맞춘 전량 매도 감지 로직
-    """
+    """전량 매도 시 유령 그물망 취소 및 청소"""
     if buy_log_df is None or buy_log_df.empty: return buy_log_df
 
     buy_log_df = _ensure_symbol_column(buy_log_df, "buy_log_df")
@@ -81,31 +84,26 @@ def clean_buy_log_for_fully_sold_symbols(buy_log_df: pd.DataFrame, holdings: Dic
 
     rows_to_keep = []
     for sym, group_logs in sym_groups.items():
-        # 잔고가 있다면 정상 유지
         if sym in valid_symbols:
             rows_to_keep.extend(group_logs)
         else:
-            # 💡 [새로운 로직] 잔고가 0일 때, 'done'(체결) 상태인 주문이 하나라도 존재한다면?
-            # -> 이전에 그물망(small/large)이 체결되어 보유 중이다가 트레일링 스탑으로 전량 익절된 것!
             has_done_order = any(
                 str(l.get("filled", "")).strip().lower() == "done"
                 for l in group_logs
             )
 
             if has_done_order:
-                print(f"🎯 빗자루 출동! {sym} 전량 수익 실현 감지 -> 잔여 그물망 취소 및 매수 로그 완전 파기")
+                print(f"🎯 빗자루 출동! {sym} 전량 수익 실현 감지 -> 잔여 그물망 취소 및 매수 로그 파기")
                 for l in group_logs:
                     if str(l.get("filled", "")).strip().lower() == "wait":
                         uuid = _clean_uuid(l.get("buy_uuid"))
                         if uuid:
                             try:
-                                time.sleep(0.3)  # ✅ 취소 API 연사 방지
-                                cancel_orders_by_uuids([uuid])
+                                time.sleep(0.3)
+                                cancel_orders_by_uuids([uuid], symbol=sym)
                             except Exception as e:
                                 print(f"⚠️ {sym} 취소 중 에러(무시): {e}")
-                # rows_to_keep에 안 담으므로 로그에서 완벽히 삭제됨
             else:
-                # 잔고가 0이더라도 done이 없으면? -> 방금 막 프로그램 켜서 wait 주문만 걸어둔 상태이므로 살려둠
                 rows_to_keep.extend(group_logs)
 
     if not rows_to_keep: return pd.DataFrame(columns=buy_log_df.columns)
@@ -177,21 +175,28 @@ def run_buy_entry_flow() -> None:
         print(f"🚨 기초 데이터(setting.csv) 로드 실패: {e}")
         return
 
-    # 💡 [순서 변경] 상태 업데이트를 먼저 하고 잔고를 나중에 가져와야 증권사 딜레이에 의한 오작동을 방지합니다.
     update_buy_log_status()
 
-    time.sleep(1)  # 잔고 조회 전 API 휴식
+    time.sleep(1)
     accounts = get_accounts()
 
     holdings = {}
     for acc in (accounts or []):
         symbol = _extract_symbol_from_account(acc)
         balance = _safe_float(acc.get("balance"), 0.0)
+        # 평가금액 필드가 있다면 가져오고, 없으면 계산
+        eval_amt = _safe_float(acc.get("eval_amt"), 0.0)
+
         if symbol and balance > 0:
-            holdings[symbol] = {"balance": balance, "avg_price": _safe_float(acc.get("avg_buy_price"))}
+            holdings[symbol] = {
+                "balance": balance,
+                "avg_price": _safe_float(acc.get("avg_buy_price")),
+                "eval_amt": eval_amt
+            }
 
     buy_log_df = pd.DataFrame(
         columns=["time", "symbol", "target_price", "buy_amount", "buy_units", "buy_type", "buy_uuid", "filled"])
+
     if os.path.exists("buy_log.csv"):
         try:
             temp_df = pd.read_csv("buy_log.csv", dtype=str)
@@ -201,15 +206,15 @@ def run_buy_entry_flow() -> None:
 
     buy_log_df = _ensure_symbol_column(buy_log_df, "buy_log_df")
 
-    # ✅ [API 과부하 방어] 종목별로 현재가를 가져올 때 0.5초의 대기 시간을 줍니다.
     current_prices = {}
     for _, row in setting_df.iterrows():
         symbol = row["symbol"]
         try:
             time.sleep(0.5)
+            # 국내주식 최우선 매도호가 가져오기
             ask = _safe_float(get_current_ask_price(symbol), 0.0)
             if ask > 0: current_prices[symbol] = ask
-        except:
+        except Exception:
             continue
 
     if not current_prices:
@@ -218,6 +223,7 @@ def run_buy_entry_flow() -> None:
 
     buy_log_df = clean_buy_log_for_fully_sold_symbols(buy_log_df, holdings)
 
+    # 💡 정찰병 및 그물망 생성 알고리즘 (casino_strategy.py)
     updated_buy_log_df = generate_buy_orders(setting_df, buy_log_df, current_prices, holdings)
 
     if updated_buy_log_df is None or updated_buy_log_df.empty: return
