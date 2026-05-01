@@ -1,0 +1,10 @@
+{
+  "blocked_until": 1771426366.3693926,
+  "block_sec": 600,
+  "consecutive_8819": 38,
+  "soft_open_streak": 0,
+  "last_soft": false,
+  "last_soft_checked_at": 1771425757.6846972,
+  "last_block_reason": "order rsp_cd=8819 msg=정정취소 가능한 주문상태가 아닙니다. payload_symbol=AUUD",
+  "updated_at": 1771425766.3694282
+}
