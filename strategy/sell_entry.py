@@ -15,7 +15,15 @@ from manager.order_executor import execute_sell_orders
 
 
 def _to_symbol(x):
-    return str(x or "").strip().replace("KRW-", "").upper()
+    """
+    [핵심 수정] 엑셀에서 앞자리 0이 날아가도 무조건 6자리 문자로 복구합니다.
+    """
+    s = str(x or "").strip().replace("KRW-", "").strip()
+    if s.endswith(".0"):
+        s = s[:-2]
+    if s.startswith("A"):
+        s = s[1:]
+    return s.zfill(6).upper()
 
 
 def _safe_float(x):
@@ -25,7 +33,6 @@ def _safe_float(x):
         return 0.0
 
 
-# ✅ 영구 보존용 거래 내역(투자 분석용)을 남기는 함수 (원화 기준 패치)
 def log_trade_history(symbol: str, avg_buy_price: float, sell_price: float, quantity: float):
     history_file = "data/trade_history.csv"
 
@@ -61,7 +68,8 @@ def run_sell_entry_flow() -> None:
     print("\n[sell_entry.py] 🎯 트레일링 스탑 매도 플로우 가동")
 
     try:
-        setting_df = pd.read_csv("setting.csv")
+        # 💡 [핵심 패치] 파일을 읽을 때 무조건 문자열(str)로 읽어서 0 증발 방지
+        setting_df = pd.read_csv("setting.csv", dtype=str)
         accounts = get_accounts()
     except Exception as e:
         print(f"🚨 기초 데이터 로드 실패: {e}")
@@ -74,12 +82,11 @@ def run_sell_entry_flow() -> None:
         bal = _safe_float(acc.get("balance"))
         if bal <= 0: continue
 
-        # DB증권 API 키값(IsuNo) 포함 호환
         sym_raw = acc.get("symbol") or acc.get("currency") or acc.get("IsuNo") or acc.get("ticker")
         sym = _to_symbol(sym_raw)
 
         if not sym: continue
-        if sym in ["KRW", "USD"]: continue
+        if sym in ["000KRW", "000USD"]: continue
 
         curr_p = 0.0
         try:
@@ -99,12 +106,11 @@ def run_sell_entry_flow() -> None:
 
     if os.path.exists("sell_log.csv"):
         try:
-            temp_df = pd.read_csv("sell_log.csv", dtype=str)
+            temp_df = pd.read_csv("sell_log.csv", dtype=str) # 💡 문자열 읽기
             if not temp_df.empty: sell_log_df = temp_df
         except pd.errors.EmptyDataError:
             pass
 
-    # 💡 브레인(casino_strategy) 작동: 고점 갱신 및 트레일링 스탑 계산
     updated_sell_df = generate_sell_orders(setting_df, holdings, sell_log_df, current_prices)
 
     if updated_sell_df is not None and not updated_sell_df.empty:

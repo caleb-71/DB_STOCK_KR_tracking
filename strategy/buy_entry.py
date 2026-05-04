@@ -19,11 +19,17 @@ BUY_STATUS_CHECK_BATCH_SIZE = 20
 BUY_STATUS_CHECK_BATCH_SLEEP_SEC = 0.5
 
 
-def _to_symbol(market_or_symbol: str) -> str:
-    """종목코드 정제 (A 접두사는 API단에서 처리)"""
+def _to_symbol(market_or_symbol: Any) -> str:
+    """
+    [핵심 수정] 엑셀에서 앞자리 0이 날아가도 무조건 6자리 문자로 복구합니다.
+    """
     s = str(market_or_symbol or "").strip()
     s = s.replace("KRW-", "").strip()
-    return s.upper()
+    if s.endswith(".0"):
+        s = s[:-2]
+    if s.startswith("A"):
+        s = s[1:]
+    return s.zfill(6).upper()  # 💡 5자리 이하면 앞에 0을 채워서 6자리로 강제 고정
 
 
 def _clean_uuid(uuid_val: Any) -> str:
@@ -37,22 +43,21 @@ def _ensure_symbol_column(df: pd.DataFrame, df_name: str = "df") -> pd.DataFrame
     if df is None or df.empty: return df
     if "symbol" in df.columns:
         df = df.copy()
-        df["symbol"] = df["symbol"].astype(str).apply(_to_symbol)
+        df["symbol"] = df["symbol"].apply(_to_symbol)
         return df
     if "market" in df.columns:
         df = df.copy()
-        df["symbol"] = df["market"].astype(str).apply(_to_symbol)
+        df["symbol"] = df["market"].apply(_to_symbol)
         return df
     return df
 
 
 def _extract_symbol_from_account(acc: Dict[str, Any]) -> Optional[str]:
-    # 국내주식 계좌 조회 API의 응답 키값(IsuNo 등) 호환
     for key in ("symbol", "IsuNo", "isu_no", "ticker", "currency"):
         v = acc.get(key)
         if v:
-            s = _to_symbol(str(v))
-            if s and s != "KRW": return s
+            s = _to_symbol(v)
+            if s and s != "000KRW": return s
     return None
 
 
@@ -69,7 +74,6 @@ def _is_no_history_error(e: Exception) -> bool:
 
 
 def clean_buy_log_for_fully_sold_symbols(buy_log_df: pd.DataFrame, holdings: Dict[str, Any]) -> pd.DataFrame:
-    """전량 매도 시 유령 그물망 취소 및 청소"""
     if buy_log_df is None or buy_log_df.empty: return buy_log_df
 
     buy_log_df = _ensure_symbol_column(buy_log_df, "buy_log_df")
@@ -169,7 +173,8 @@ def run_buy_entry_flow() -> None:
     print("\n[buy_entry.py] 🛒 매수 전략 플로우 가동")
 
     try:
-        setting_df = pd.read_csv("setting.csv")
+        # 💡 [핵심 패치] 파일을 읽을 때 무조건 문자열(str)로 읽어서 0 증발 방지
+        setting_df = pd.read_csv("setting.csv", dtype=str)
         setting_df = _ensure_symbol_column(setting_df, "setting_df")
     except Exception as e:
         print(f"🚨 기초 데이터(setting.csv) 로드 실패: {e}")
@@ -184,7 +189,6 @@ def run_buy_entry_flow() -> None:
     for acc in (accounts or []):
         symbol = _extract_symbol_from_account(acc)
         balance = _safe_float(acc.get("balance"), 0.0)
-        # 평가금액 필드가 있다면 가져오고, 없으면 계산
         eval_amt = _safe_float(acc.get("eval_amt"), 0.0)
 
         if symbol and balance > 0:
@@ -199,7 +203,7 @@ def run_buy_entry_flow() -> None:
 
     if os.path.exists("buy_log.csv"):
         try:
-            temp_df = pd.read_csv("buy_log.csv", dtype=str)
+            temp_df = pd.read_csv("buy_log.csv", dtype=str) # 💡 문자열 읽기
             if not temp_df.empty: buy_log_df = temp_df
         except pd.errors.EmptyDataError:
             pass
@@ -211,7 +215,6 @@ def run_buy_entry_flow() -> None:
         symbol = row["symbol"]
         try:
             time.sleep(0.5)
-            # 국내주식 최우선 매도호가 가져오기
             ask = _safe_float(get_current_ask_price(symbol), 0.0)
             if ask > 0: current_prices[symbol] = ask
         except Exception:
@@ -223,7 +226,6 @@ def run_buy_entry_flow() -> None:
 
     buy_log_df = clean_buy_log_for_fully_sold_symbols(buy_log_df, holdings)
 
-    # 💡 정찰병 및 그물망 생성 알고리즘 (casino_strategy.py)
     updated_buy_log_df = generate_buy_orders(setting_df, buy_log_df, current_prices, holdings)
 
     if updated_buy_log_df is None or updated_buy_log_df.empty: return

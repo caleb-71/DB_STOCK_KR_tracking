@@ -1,0 +1,8 @@
+{
+  "access_token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzUxMiJ9.eyJzdWIiOiJ0b2tlbiIsImF1ZCI6IjhmZDgyMTZmLWZlYmQtNDA2NS1iNDgxLTVmNWFhZjg1Mjk5NSIsIm5iZiI6MTc3Nzg5NjgyOSwiZ3JhbnRfdHlwZSI6IkNsaWVudCIsImlzcyI6InVub2d3IiwiZXhwIjoxNzc3OTgzMjI5LCJpYXQiOjE3Nzc4OTY4MjksImp0aSI6IlBTRHZqdUxJaVBERE82b0d6YWNLQlNzWUtXcFBHY0hEZlVOWCJ9.eKz9PVwIojbMAxwubCHoQWlWkbuL_7CMTG-mZrDtg-QVBjV-KVpBXdfH5d-VsFt1JP9-tsNQkWCG35QWWvVVPw",
+  "expires_at": "2026-05-05T12:13:49.621679+00:00",
+  "last_issued_at": "2026-05-04T12:13:49.621679+00:00",
+  "token_type": "Bearer",
+  "scope": "oob",
+  "expires_in": 86400
+}

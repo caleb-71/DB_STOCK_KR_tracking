@@ -209,14 +209,23 @@ def get_accounts_symbol_map() -> Dict[str, Dict[str, Any]]:
         if qty <= 0:
             continue
 
+        # API 원본 데이터 추출
         avg = _safe_float(item.get("BookUprc"), 0.0)
+        eval_amt = _safe_float(item.get("EvalAmt"), 0.0)
+        eval_pnl = _safe_float(item.get("EvalPnlAmt"), 0.0)
+
+        # 💡 [핵심 패치] 당일 매수 등으로 증권사가 평단가를 0원으로 줬을 경우, 수학적 역산으로 진짜 평단가 복구!
+        if avg <= 0 and qty > 0:
+            buy_amt = eval_amt - eval_pnl  # 총 매입금액 = 평가금액 - 평가손익
+            if buy_amt > 0:
+                avg = buy_amt / qty        # 진짜 평단가 = 총 매입금액 / 수량
 
         result[clean_sym] = {
             "symbol": clean_sym,
             "quantity": qty,
             "avg_buy_price": avg,
-            "eval_amt": _safe_float(item.get("EvalAmt"), 0.0),
-            "eval_pnl": _safe_float(item.get("EvalPnlAmt"), 0.0),
+            "eval_amt": eval_amt,
+            "eval_pnl": eval_pnl,
             "return_rate": _safe_float(item.get("Ernrat"), 0.0)
         }
 
@@ -299,7 +308,7 @@ def get_accounts() -> List[Dict[str, Any]]:
                 "IsuNo": sym,  # 원본 키값 호환
                 "balance": str(info["quantity"]),
                 "locked": "0",
-                "avg_buy_price": str(info["avg_buy_price"]),
+                "avg_buy_price": str(info["avg_buy_price"]), # ✅ 복구된 진짜 평단가가 전파됨
                 "eval_amt": str(info["eval_amt"]),
             })
     except Exception as e:
